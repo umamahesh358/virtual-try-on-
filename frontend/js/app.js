@@ -10,6 +10,7 @@ let calibX = 0, calibY = 0, calibScale = 1.0;
 // Camera state
 let currentStream = null;
 let currentFacingMode = "user"; // "user" or "environment"
+let isRenderLoopRunning = false;
 const video = document.getElementById('webcam');
 const canvasElement = document.getElementById('output_canvas');
 const canvasCtx = canvasElement.getContext('2d');
@@ -25,12 +26,14 @@ let isTrackingReady = false;
 
 // Temporal smoothing buffers & State
 const SMOOTH_FRAMES = 7;
-let smoothingBuffer = [];
+let smoothingBuffers = {};
 const CONFIDENCE_THRESHOLD = 0.75;
 
 // Physics / Hysteresis State
-let lastEarringAngle = 0;
-let earringVelocity = 0;
+let physicsState = {
+    leftEar: { angle: 0, velocity: 0 },
+    rightEar: { angle: 0, velocity: 0 }
+};
 let currentHeadTurn = 0; // -1 to 1
 
 // DOM Elements
@@ -95,7 +98,10 @@ async function setupCamera() {
             }
 
             // Start render loop
-            window.requestAnimationFrame(renderLoop);
+            if (!isRenderLoopRunning) {
+                isRenderLoopRunning = true;
+                window.requestAnimationFrame(renderLoop);
+            }
         };
     } catch (err) {
         console.error("Error accessing camera:", err);
@@ -208,7 +214,7 @@ async function renderLoop() {
                 if (handResults.landmarks && handResults.landmarks.length > 0) {
                     processHandResults(handResults.landmarks[0], cat);
                 } else {
-                    smoothingBuffer = [];
+                    smoothingBuffers = {};
                 }
             }
             else if (["Earrings", "Chokers", "Nose Rings", "Maang Tikka"].includes(cat)) {
@@ -216,7 +222,7 @@ async function renderLoop() {
                 if (faceResults.faceLandmarks && faceResults.faceLandmarks.length > 0) {
                     processFaceResults(faceResults.faceLandmarks[0], cat);
                 } else {
-                    smoothingBuffer = [];
+                    smoothingBuffers = {};
                 }
             }
             else if (["Necklaces", "Waist Jewelry"].includes(cat)) {
@@ -224,7 +230,7 @@ async function renderLoop() {
                 if (poseResults.landmarks && poseResults.landmarks.length > 0) {
                     processPoseResults(poseResults.landmarks[0], cat);
                 } else {
-                    smoothingBuffer = [];
+                    smoothingBuffers = {};
                 }
             }
         }
@@ -235,18 +241,23 @@ async function renderLoop() {
 
 // ------------------- Tracking & Smoothing -------------------
 
-function applySmoothing(rawX, rawY, rawWidth, rawRotation) {
-    smoothingBuffer.push({x: rawX, y: rawY, w: rawWidth, r: rawRotation});
-    if (smoothingBuffer.length > SMOOTH_FRAMES) {
-        smoothingBuffer.shift();
+function applySmoothing(key, rawX, rawY, rawWidth, rawRotation) {
+    if (!smoothingBuffers[key]) {
+        smoothingBuffers[key] = [];
+    }
+
+    let buffer = smoothingBuffers[key];
+    buffer.push({x: rawX, y: rawY, w: rawWidth, r: rawRotation});
+    if (buffer.length > SMOOTH_FRAMES) {
+        buffer.shift();
     }
 
     let sumX = 0, sumY = 0, sumW = 0, sumR = 0;
-    smoothingBuffer.forEach(p => {
+    buffer.forEach(p => {
         sumX += p.x; sumY += p.y; sumW += p.w; sumR += p.r;
     });
 
-    let n = smoothingBuffer.length;
+    let n = buffer.length;
     return {
         x: sumX / n,
         y: sumY / n,
@@ -278,7 +289,7 @@ function getTexture(viewName) {
 
 // ------------------- Specific Placement Logic -------------------
 
-function drawAsset(x, y, width, rotation, img, opacity = 1.0) {
+function drawAsset(x, y, width, rotation, img, opacity = 1.0, mirror = false) {
     if (!img) return;
 
     const aspect = img.height / img.width;
@@ -294,6 +305,9 @@ function drawAsset(x, y, width, rotation, img, opacity = 1.0) {
     canvasCtx.globalAlpha = opacity;
     canvasCtx.translate(x, y);
     canvasCtx.rotate(rotation);
+    if (mirror) {
+        canvasCtx.scale(-1, 1);
+    }
     canvasCtx.drawImage(img, -width/2, -finalHeight/2, width, finalHeight);
     canvasCtx.restore();
 }
@@ -313,7 +327,7 @@ function processHandResults(landmarks, category) {
         let segmentLen = Math.hypot(dx, dy);
         let width = segmentLen * 1.5;
 
-        let smoothed = applySmoothing(cx, cy, width, rot);
+        let smoothed = applySmoothing('ring_finger', cx, cy, width, rot);
         drawAsset(smoothed.x, smoothed.y, smoothed.w, smoothed.r, getTexture('front'));
     }
     else if (category === "Bangles") {
@@ -330,7 +344,7 @@ function processHandResults(landmarks, category) {
 
         let width = Math.hypot(dx, dy) * 1.2;
 
-        let smoothed = applySmoothing(cx, cy, width, rot);
+        let smoothed = applySmoothing('bangle_wrist', cx, cy, width, rot);
 
         // Render back layer first if available, then front layer, to create depth
         if (currentViews['back']) {
@@ -368,42 +382,40 @@ function processFaceResults(landmarks, category) {
 
         let width = faceWidth * canvasElement.width * 0.3; // Scale relative to face
 
-        let smoothed = applySmoothing(cx, cy, width, headRoll);
+        let smoothed = applySmoothing('nose_ring', cx, cy, width, headRoll);
         drawAsset(smoothed.x, smoothed.y, smoothed.w, smoothed.r, viewImg);
     }
     else if (category === "Earrings") {
-        // Physics for swing
-        const targetAngle = headRoll;
         const spring = 0.1;
         const friction = 0.8;
-
-        let force = (targetAngle - lastEarringAngle) * spring;
-        earringVelocity += force;
-        earringVelocity *= friction;
-        lastEarringAngle += earringVelocity;
 
         let width = faceWidth * canvasElement.width * 0.3;
 
         // Draw Left Earring
         if (turnRatio < 0.5) { // Hide if turned too far right
+            let forceL = (headRoll - physicsState.leftEar.angle) * spring;
+            physicsState.leftEar.velocity += forceL;
+            physicsState.leftEar.velocity *= friction;
+            physicsState.leftEar.angle += physicsState.leftEar.velocity;
+
             let lEar = landmarks[132]; // Left earlobe
-            let smoothedL = applySmoothing(lEar.x * canvasElement.width, lEar.y * canvasElement.height, width, lastEarringAngle);
+            let smoothedL = applySmoothing('left_ear', lEar.x * canvasElement.width, lEar.y * canvasElement.height, width, physicsState.leftEar.angle);
             drawAsset(smoothedL.x, smoothedL.y, smoothedL.w, smoothedL.r, viewImg);
         }
 
         // Draw Right Earring
         if (turnRatio > -0.5) { // Hide if turned too far left
+            let forceR = (-headRoll - physicsState.rightEar.angle) * spring; // Inverse swing target
+            physicsState.rightEar.velocity += forceR;
+            physicsState.rightEar.velocity *= friction;
+            physicsState.rightEar.angle += physicsState.rightEar.velocity;
+
             let rEar = landmarks[361]; // Right earlobe
-            let smoothedR = applySmoothing(rEar.x * canvasElement.width, rEar.y * canvasElement.height, width, lastEarringAngle);
+            let smoothedR = applySmoothing('right_ear', rEar.x * canvasElement.width, rEar.y * canvasElement.height, width, physicsState.rightEar.angle);
 
             // Mirror texture if it's front view
-            canvasCtx.save();
-            if (currentViewName === "front") {
-                canvasCtx.scale(-1, 1);
-                smoothedR.x *= -1;
-            }
-            drawAsset(smoothedR.x, smoothedR.y, smoothedR.w, smoothedR.r, viewImg);
-            canvasCtx.restore();
+            let shouldMirror = currentViewName === "front";
+            drawAsset(smoothedR.x, smoothedR.y, smoothedR.w, smoothedR.r, viewImg, 1.0, shouldMirror);
         }
     }
     else if (category === "Chokers") {
@@ -420,7 +432,7 @@ function processFaceResults(landmarks, category) {
         );
         let width = jawSpan * 1.1; // Lock to jawline span
 
-        let smoothed = applySmoothing(cx, cy, width, headRoll);
+        let smoothed = applySmoothing('choker', cx, cy, width, headRoll);
         drawAsset(smoothed.x, smoothed.y, smoothed.w, smoothed.r, viewImg);
     }
     else if (category === "Maang Tikka") {
@@ -437,7 +449,7 @@ function processFaceResults(landmarks, category) {
 
         let width = faceWidth * canvasElement.width * 0.4;
 
-        let smoothed = applySmoothing(cx, cy, width, rot);
+        let smoothed = applySmoothing('maang_tikka', cx, cy, width, rot);
         drawAsset(smoothed.x, smoothed.y, smoothed.w, smoothed.r, viewImg);
     }
 }
@@ -465,7 +477,7 @@ function processPoseResults(landmarks, category) {
 
         let width = Math.hypot(dx, dy) * 0.9; // Scale to shoulder width
 
-        let smoothed = applySmoothing(cx, cy, width, rot);
+        let smoothed = applySmoothing('necklace', cx, cy, width, rot);
         drawAsset(smoothed.x, smoothed.y, smoothed.w, smoothed.r, viewImg);
     }
     else if (category === "Waist Jewelry") {
@@ -481,7 +493,7 @@ function processPoseResults(landmarks, category) {
 
         let width = Math.hypot(dx, dy) * 1.5; // Scale to hip width
 
-        let smoothed = applySmoothing(cx, cy, width, rot);
+        let smoothed = applySmoothing('waist', cx, cy, width, rot);
         drawAsset(smoothed.x, smoothed.y, smoothed.w, smoothed.r, viewImg);
     }
 }
@@ -554,7 +566,7 @@ async function fetchCatalog() {
 async function selectProduct(item) {
     activeProduct = item;
     resetCalibration();
-    smoothingBuffer = []; // clear tracking history
+    smoothingBuffers = {}; // clear tracking history
     currentViewName = "front";
 
     // Load images
