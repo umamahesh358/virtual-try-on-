@@ -1,0 +1,3 @@
+backend/products/
+*.log
+frontend/node_modules/

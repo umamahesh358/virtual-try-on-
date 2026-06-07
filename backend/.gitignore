@@ -1,0 +1,6 @@
+__pycache__/
+*.py[cod]
+products/
+*.log
+venv/
+.env
