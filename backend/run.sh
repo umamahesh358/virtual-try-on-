@@ -1,20 +1,25 @@
 #!/bin/bash
 
-# Start FastAPI backend in background
-python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 &
+# Get the directory of the script
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+cd "$DIR"
+
+# Ensure we have the right environment and start the backend
+echo "Starting backend..."
+uvicorn main:app --host 0.0.0.0 --port 8000 &
 BACKEND_PID=$!
 
-# Wait for backend to start
-sleep 2
-
-# Start a simple HTTP server for frontend
-cd /app/frontend
-python3 -m http.server 8080 &
+# Start the frontend
+echo "Starting frontend..."
+cd ../frontend
+python3 -m http.server 3000 &
 FRONTEND_PID=$!
 
-echo "Backend running on port 8000"
-echo "Frontend running on port 8080"
+echo "Virtual Try-On is running!"
+echo "Backend: http://localhost:8000"
+echo "Frontend: http://localhost:3000"
+echo "Admin Panel: http://localhost:3000/admin"
 
-# Wait for processes
+# Wait for both processes
 wait $BACKEND_PID
 wait $FRONTEND_PID
