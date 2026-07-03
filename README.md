@@ -1,53 +1,48 @@
-# Virtual Try-On (VTO) Jewelry Platform
+# NextGen Jewelry Virtual Try-On (VTO) Platform
 
-A zero-fee, open-source, web-based virtual try-on platform for jewelry. This platform allows users to try on rings, earrings, necklaces, chokers, nose rings (naths), bangles, maang tikkas, and waist jewelry directly in their web browser without the need for expensive 3D rendering APIs or native mobile apps.
+A zero-fee, open-source, web-based virtual try-on platform for jewelry. This version introduces a dedicated Admin Panel, allowing store owners to upload 2D jewelry assets and precisely adjust their size and position for perfect live camera alignment.
 
-## Features
+## Key Features
 
-* **Multi-Category Support:** Real-time VTO for 8 distinct jewelry types.
-* **Hybrid 4-View Engine:** Faux-3D experience by seamlessly swapping between front, back, left, and right product images based on the user's viewing angle. Includes a smart fallback to compress/mirror single images if side views are unavailable.
-* **Automated Asset Ingestion:** The backend automatically removes backgrounds (via `rembg`) and tightly crops image alpha boundaries (via `OpenCV`) for perfect VTO alignment.
-* **Advanced Tracking:** Utilizes Google MediaPipe (Face Mesh, Hand, and Pose) for accurate 3D landmark tracking.
-* **Polish & Stability:** Built-in 7-frame temporal smoothing, confidence gating (hides assets on tracking loss), hysteresis for flicker-free texture swapping, and manual UI calibration controls.
+* **Admin Adjustments:** Upload images, automatically remove backgrounds (via `rembg`), and use a live visual editor to adjust `width`, `length/height`, and `x/y offsets` independently.
+* **Proportional Rendering:** Adjustment offsets are calculated proportionally to the detected body landmarks, ensuring that jewelry stays perfectly aligned even as the user moves closer to or further from the camera.
+* **Multi-Category Support:** Real-time VTO for Rings, Bangles, Earrings, Necklaces, Chokers, Nose Rings, Maang Tikkas, and Waist Jewelry.
+* **Advanced Tracking:** Utilizes Google MediaPipe (Face Mesh, Hand, and Pose) for accurate landmark tracking.
+* **Open Source Stack:** Built strictly with Python (FastAPI), OpenCV, rembg, vanilla JS/HTML, and MediaPipe. No paid AR SDKs required.
 
 ## Project Structure
 
-* `/backend` - FastAPI server handling image processing and catalog management.
-* `/frontend` - Vanilla JS/HTML/Tailwind application for the live VTO camera feed.
-* `/products` - Automatically generated storage for processed assets and metadata.
+* `/backend` - FastAPI server handling image processing (background removal, alpha cropping) and serving product catalog/metadata.
+* `/frontend` - Vanilla JS/HTML application containing both the main Try-On Store and the Admin Panel.
+* `/products` - Automatically generated local storage for processed assets and their JSON configuration files.
 
 ## Prerequisites
 
 * Python 3.10+
 * A modern web browser with camera access
 
-## How to Run the Project
+## Quick Start
 
-### 1. Start the Backend
+1. Clone the repository.
+2. Install the backend dependencies:
+   ```bash
+   cd backend
+   pip install -r requirements.txt
+   ```
+3. Run the integrated start script (from the project root or the `backend` directory):
+   ```bash
+   ./backend/run.sh
+   ```
 
-The backend handles image uploads, background removal, and serves the product files. It is recommended to use a virtual environment.
+The script will automatically start:
+* **Backend API:** `http://localhost:8000`
+* **Storefront (Try-On):** `http://localhost:3000`
+* **Admin Panel:** `http://localhost:3000/admin`
 
-```bash
-cd backend
-pip install -r requirements.txt
-./run.sh
-# Alternatively: python main.py
-```
-*The backend will be available at `http://localhost:8000`*
+## Workflow
 
-### 2. Start the Frontend
-
-The frontend is a static web application. You can serve it using any simple HTTP server. If you have Python installed, you can use `http.server`:
-
-```bash
-cd frontend
-python -m http.server 3000
-```
-*Open your browser and navigate to `http://localhost:3000`*
-
-## How to Add Products
-
-1. You can add products programmatically by sending a `POST` request to `http://localhost:8000/upload/` as `multipart/form-data`.
-2. Include the `category` field (e.g., 'Earrings', 'Rings', 'Necklaces').
-3. Include the image files in the fields named `front`, `left`, `right`, and `back`. You can upload just `front`, or any combination of the four.
-4. The system will process the images, save them to the `/products` directory, and they will immediately appear in the frontend try-on catalog.
+1. Open `http://localhost:3000/admin`.
+2. Select a category and upload a 2D jewelry image.
+3. Wait for the background to be removed.
+4. Use the sliders to adjust the item's width, length, and positioning offsets. Click **Save Adjustments**.
+5. Navigate to `http://localhost:3000` and select the item from the catalog to try it on live!
